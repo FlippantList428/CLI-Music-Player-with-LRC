@@ -49,14 +49,14 @@ Uruchom odtwarzacz na jeden z poniższych sposobów:
 **1. Uruchomienie wybranego utworu:**
 
 ```bash
-python cli_player_2.py nazwa_pliku.mp3
+python cli_player.py nazwa_pliku.mp3
 
 ```
 
 **2. Uruchomienie całego folderu z muzyką:**
 
 ```bash
-python cli_player_2.py /ścieżka/do/katalogu/z/muzyką
+python cli_player.py /ścieżka/do/katalogu/z/muzyką
 
 ```
 
@@ -65,7 +65,7 @@ python cli_player_2.py /ścieżka/do/katalogu/z/muzyką
 **3. Uruchomienie w bieżącym katalogu:**
 
 ```bash
-python cli_player_2.py
+python cli_player.py
 
 ```
 
