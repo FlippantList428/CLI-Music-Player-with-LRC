@@ -6,75 +6,66 @@ Ten projekt to lekki odtwarzacz muzyki działający całkowicie w terminalu, wyp
 
 Do poprawnego działania skryptu niezbędne są:
 
-* **Python 3** (wykorzystuje wbudowane moduły: `sys`, `os`, `re`, `time`, `curses`)
+* **Python 3** (wraz z wbudowanymi modułami: `sys`, `os`, `re`, `time`, `curses`, `io`)
 
 
-* **mpv** (systemowy odtwarzacz multimedialny)
-* **python-mpv** (Pythonowe dowiązanie do biblioteki mpv)
+* **Biblioteki zewnętrzne**: `mpv`, `mutagen` (do obsługi metadanych ID3) oraz `Pillow` (do generowania ASCII artu)
 
 ### Instalacja w różnych dystrybucjach Linuxa
 
-Aby zainstalować potrzebne pakiety, użyj polecenia odpowiedniego dla Twojego systemu:
+Aby zainstalować potrzebne pakiety, użyj polecenia odpowiedniego dla Twojego systemu.
 
 **Arch Linux / Manjaro**
 
 ```bash
-sudo pacman -S mpv python-mpv
+sudo pacman -S mpv python-mpv python-mutagen python-pillow
 
 ```
 
-**Ubuntu / Pop!_OS**
+**Ubuntu / Pop!_OS / Linux Mint / Debian**
 
 ```bash
 sudo apt update
-sudo apt install mpv python3-mpv
-
-```
-
-**Linux Mint / Debian**
-
-```bash
-sudo apt update
-sudo apt install mpv python3-mpv
+sudo apt install mpv python3-mpv python3-mutagen python3-pil
 
 ```
 
 **Fedora**
 
 ```bash
-sudo dnf install mpv python3-mpv
+sudo dnf install mpv python3-mpv python3-mutagen python3-pillow
 
 ```
 
-> **Wskazówka:** Jeśli Twoja dystrybucja (np. starsza wersja Ubuntu) nie posiada w repozytorium pakietu `python3-mpv`, zainstaluj najpierw systemowy odtwarzacz `mpv`, a wtyczkę dla Pythona pobierz za pomocą pip:
-> `sudo apt install mpv && pip install python-mpv`
+> **Wskazówka:** Jeśli Twój system nie posiada w repozytorium pakietu `python-mpv` lub `python-pillow`, możesz je zainstalować za pomocą pip (wymaga `pip`):
+> `pip install python-mpv mutagen pillow`
 
 ## 🚀 Uruchamianie i Użycie
 
-Program ładuje pliki `.mp3` i dopasowuje do nich pliki tekstowe `.lrc` o identycznej nazwie. Odtwarzacz zignoruje brak pliku `.lrc`, wyświetlając odpowiedni komunikat i po prostu odtworzy muzykę.
+Program automatycznie pobiera metadane (Autor, Album) oraz wbudowany tekst (`USLT`) z pliku `.mp3` lub wczytuje zewnętrzny plik `.lrc` o tej samej nazwie.
 
 Uruchom odtwarzacz na jeden z poniższych sposobów:
 
 **1. Uruchomienie wybranego utworu:**
 
 ```bash
-python cli_player.py nazwa_pliku.mp3
+python cli_player_2.py nazwa_pliku.mp3
 
 ```
 
 **2. Uruchomienie całego folderu z muzyką:**
 
 ```bash
-python cli_player.py /ścieżka/do/katalogu/z/muzyką
+python cli_player_2.py /ścieżka/do/katalogu/z/muzyką
 
 ```
 
-(Program automatycznie stworzy playlistę ze wszystkich plików MP3 w tym folderze i zacznie grać).
+(Program automatycznie stworzy playlistę ze wszystkich plików MP3 w tym folderze).
 
-**3. Uruchomienie w bieżącym katalogu (przy odpowiedniej konfiguracji kodu):**
+**3. Uruchomienie w bieżącym katalogu:**
 
 ```bash
-python cli_player.py
+python cli_player_2.py
 
 ```
 
