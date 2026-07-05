@@ -322,6 +322,33 @@ class MpvLrcPlayer:
 
     def run(self):
         while True:
+            # Bezpośredni odczyt stanu z mpv - dokładnie tą samą metodą (getattr),
+            # która już na pewno działa dla vol/mute/pause. Nie polegamy wyłącznie
+            # na callbackach property_observer dla time-pos/duration/eof-reached,
+            # bo w niektórych konfiguracjach python-mpv/mpv te callbacki nie są
+            # wywoływane niezawodnie, przez co "needs_next" nigdy nie zostawało
+            # ustawione i utwór nie przechodził dalej mimo że faktycznie się kończył.
+            if self.playlist and not self.needs_next:
+                polled_time = getattr(self.player, 'time_pos', None)
+                polled_dur = getattr(self.player, 'duration', None)
+                if polled_time is not None:
+                    self.time_pos = polled_time
+                if polled_dur is not None:
+                    self.duration = polled_dur
+
+                polled_eof = getattr(self.player, 'eof_reached', False)
+                current_pause = getattr(self.player, 'pause', False)
+
+                if polled_eof:
+                    if self.duration <= 0.0 and (time.time() - self.load_time) < 3.0:
+                        self.bad_file = True
+                    self.needs_next = True
+                elif (not self.bad_file and not current_pause and self.duration > 0
+                        and self.time_pos >= self.duration - 0.25):
+                    # Zapasowy sygnał: jeśli mpv z jakiegoś powodu nie ustawi
+                    # eof-reached, a utwór dogonił swoją długość, i tak przechodzimy dalej.
+                    self.needs_next = True
+
             # Obsługa zakończenia utworu (naturalna, błąd pliku, powtarzanie, shuffle...)
             if self.needs_next:
                 self.on_track_end()
