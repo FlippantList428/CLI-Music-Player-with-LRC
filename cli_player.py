@@ -28,6 +28,12 @@ REPEAT_LABELS = {REPEAT_OFF: "WYŁ", REPEAT_ALL: "WSZYSTKO", REPEAT_ONE: "JEDEN"
 
 class MpvLrcPlayer:
     def __init__(self, stdscr, start_file):
+        """
+        Uwaga dot. wydajności: playlista jest budowana jednorazowo przez
+        os.listdir() i trzymana w całości w pamięci. Dla bibliotek rzędu
+        dziesiątek tysięcy plików MP3 w jednym katalogu rozważ podział na
+        mniejsze foldery lub indeksowanie zamiast jednorazowego listowania.
+        """
         self.stdscr = stdscr
         
         # Poprawna obsługa ścieżek z innych lokalizacji
@@ -157,7 +163,7 @@ class MpvLrcPlayer:
                 raise ValueError("Pusty plik")
             with open(mp3_path, 'rb') as f:
                 f.read(4)
-        except Exception:
+        except (OSError, ValueError):
             self.bad_file = True
 
         try:
@@ -172,7 +178,8 @@ class MpvLrcPlayer:
             # Ekstrakcja i konwersja okładki na KOLOROWE ASCII
             apic = audio.getall('APIC')
             if apic:
-                img = Image.open(io.BytesIO(apic[0].data)).convert('RGB').resize((24, 10))
+                with Image.open(io.BytesIO(apic[0].data)) as raw_img:
+                    img = raw_img.convert('RGB').resize((24, 10))
                 chars = "@%#*+=-:. "
                 for y in range(img.height):
                     line_data = []
@@ -190,7 +197,10 @@ class MpvLrcPlayer:
                         
                         line_data.append((char, 10 + color_idx))
                     self.ascii_art.append(line_data)
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
+            # Obejmuje typowe błędy uszkodzonych/nietypowych tagów ID3 oraz
+            # niepoprawnych danych obrazka (mutagen/Pillow rzucają różne wyjątki
+            # w zależności od tego, co dokładnie jest nie tak z plikiem).
             pass
         
         if uslt_lyrics:
@@ -217,9 +227,12 @@ class MpvLrcPlayer:
             self.needs_next = True
 
     def refill_shuffle_bag(self):
-        """Losuje nową kolejność odtwarzania (pomijając aktualnie grany utwór)."""
+        """Losuje nową kolejność odtwarzania (pomijając aktualnie grany utwór, o ile to możliwe)."""
         indices = list(range(len(self.playlist)))
-        if self.current_idx in indices:
+        # Dla playlisty z 1 utworem usunięcie bieżącego indeksu zostawiłoby pusty
+        # worek i wywołałoby IndexError przy najbliższym .pop() - w takim wypadku
+        # pozwalamy na odtworzenie tego samego utworu zamiast wywalać program.
+        if len(indices) > 1 and self.current_idx in indices:
             indices.remove(self.current_idx)
         random.shuffle(indices)
         self.shuffle_bag = indices
@@ -325,7 +338,11 @@ class MpvLrcPlayer:
             # --- GÓRNY PANEL ---
             track_name = self.playlist[self.current_idx] if self.playlist else "Brak plików"
             title_str = f" MPV Player | {track_name} ({self.current_idx + 1}/{len(self.playlist)}) "
-            self.stdscr.addstr(0, max(0, width//2 - len(title_str)//2), title_str, curses.color_pair(3) | curses.A_BOLD)
+            title_str = title_str[:max(0, width - 1)]  # bardzo długie nazwy plików nie mogą wywrócić renderowania
+            try:
+                self.stdscr.addstr(0, max(0, width//2 - len(title_str)//2), title_str, curses.color_pair(3) | curses.A_BOLD)
+            except curses.error:
+                pass
 
             time_str = f" {self.format_time(self.time_pos)} / {self.format_time(self.duration)} "
             bar_width = width - len(time_str) - 4
@@ -333,7 +350,10 @@ class MpvLrcPlayer:
                 progress = min(1.0, max(0.0, self.time_pos / self.duration)) if self.duration > 0 else 0.0
                 filled = int(bar_width * progress)
                 bar = "[" + "=" * filled + ">" + " " * (bar_width - filled - 1) + "]"
-                self.stdscr.addstr(2, 2, bar + time_str, curses.color_pair(2))
+                try:
+                    self.stdscr.addstr(2, 2, bar + time_str, curses.color_pair(2))
+                except curses.error:
+                    pass
 
             vol = getattr(self.player, 'volume', 100.0)
             mute = getattr(self.player, 'mute', False)
@@ -342,7 +362,10 @@ class MpvLrcPlayer:
             vol_str = f"Głośność: {'WYCISZONY' if mute else f'{int(vol)}%'}"
             state_str = "PAUZA" if pause else "ODTWARZANIE"
             auto_str = "AUTO-NEXT: WŁ" if self.auto_next else "AUTO-NEXT: WYŁ"
-            self.stdscr.addstr(3, 2, f"{vol_str} | {state_str} | {auto_str}", curses.color_pair(2) | curses.A_BOLD)
+            try:
+                self.stdscr.addstr(3, 2, f"{vol_str} | {state_str} | {auto_str}"[:max(0, width - 4)], curses.color_pair(2) | curses.A_BOLD)
+            except curses.error:
+                pass
 
             # --- DRUGI PASEK STATUSU: Shuffle / Powtarzanie / Auto-pomijanie błędów ---
             shuffle_str = f"SHUFFLE: {'WŁ' if self.shuffle else 'WYŁ'}"
@@ -396,12 +419,16 @@ class MpvLrcPlayer:
 
                 # Środek dopasowujący się tak, aby pominąć górną grafikę
                 center_y = max(top_margin + 2, height // 2)
-                visible_lines = max(1, (height - center_y - 2))
+                visible_lines = max(3, (height - center_y - 2))
 
                 start_idx = max(0, current_index - visible_lines)
                 end_idx = min(len(self.lyrics), current_index + visible_lines + 1)
 
-                row_y = center_y - (current_index - start_idx) if current_index >= 0 else center_y - (-start_idx)
+                # Zanim padnie pierwsza linijka tekstu (current_index == -1), traktujemy
+                # pozycję "tuż przed start_idx" jako punkt odniesienia, żeby nadchodzące
+                # wersy pojawiały się od razu pod środkiem, zamiast dokładnie na środku.
+                anchor = current_index if current_index >= 0 else start_idx - 1
+                row_y = center_y - (anchor - start_idx)
 
                 for i in range(start_idx, end_idx):
                     if top_margin <= row_y < height - 2:
@@ -425,9 +452,12 @@ class MpvLrcPlayer:
                     row_y += 1
 
             # --- DOLNY PANEL: Klawiszologia ---
-            help_str = " ←/→:Przewijaj | ↑/↓:Głośność | Spacja:Pauza | m:Wycisz | a:Auto-next | s:Shuffle | r:Powtarzaj | b:Auto-pomijanie | n/p:Nast/Poprz | q:Wyjście "
+            full_help_str = " ←/→:Przewijaj | ↑/↓:Głośność | Spacja:Pauza | m:Wycisz | a:Auto-next | s:Shuffle | r:Powtarzaj | b:Auto-pomijanie | n/p:Nast/Poprz | q:Wyjście "
+            short_help_str = " Spacja:Pauza | ↑/↓:Vol | n/p:Utwór | s:Shuffle | r:Powtarzaj | q:Wyjście "
+            help_str = full_help_str if width >= 100 else short_help_str
+            help_str = help_str[:max(0, width - 1)]
             try:
-                self.stdscr.addstr(height - 1, max(0, width//2 - len(help_str)//2), help_str[:max(0, width-1)], curses.color_pair(3) | curses.A_REVERSE)
+                self.stdscr.addstr(height - 1, max(0, width//2 - len(help_str)//2), help_str, curses.color_pair(3) | curses.A_REVERSE)
             except curses.error:
                 pass
 
@@ -465,8 +495,12 @@ class MpvLrcPlayer:
             elif c in [curses.KEY_END, 360]:
                 if self.duration: self.player.time_pos = max(0.0, self.duration - 1.0)
             elif c == ord('n'):
+                self.needs_next = False
+                self.bad_file = False
                 self.next_track()
             elif c == ord('p'):
+                self.needs_next = False
+                self.bad_file = False
                 self.prev_track()
 
             time.sleep(0.05)
@@ -474,7 +508,14 @@ class MpvLrcPlayer:
         self.player.terminate()
 
 def main(stdscr, target_path):
-    MpvLrcPlayer(stdscr, target_path).run()
+    # curses.wrapper zawsze poprawnie przywróci terminal, ale samo w sobie nie
+    # przekazuje treści wyjątku dalej - łapiemy go tutaj, żeby użytkownik dostał
+    # czytelny komunikat zamiast surowego tracebacku na (już naprawionym) terminalu.
+    try:
+        MpvLrcPlayer(stdscr, target_path).run()
+    except Exception as e:
+        return str(e)
+    return None
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
