@@ -1,10 +1,11 @@
+#!/usr/bin/env python3
+
 import sys
 import os
 import re
 import time
 import curses
 import io
-import locale
 
 try:
     import mpv
@@ -16,42 +17,6 @@ except ImportError:
     print("Arch Linux: sudo pacman -S mpv python-mpv python-mutagen python-pillow")
     print("Ubuntu/Mint: sudo apt install mpv python3-mpv python3-mutagen python3-pil")
     sys.exit(1)
-
-
-# --- Pomocnicze funkcje do wyświetlania naprawdę "powiększonego" tekstu ---
-# curses nie potrafi zmieniać rozmiaru fontu per-znak, ale znaki z bloku
-# Unicode "Fullwidth Forms" zajmują na ekranie 2 kolumny zamiast jednej,
-# dzięki czemu aktualny wers wygląda realnie większy (a nie tylko oznaczony
-# strzałkami).
-
-def to_fullwidth(text):
-    """Konwertuje standardowe znaki ASCII na ich szerokie odpowiedniki Unicode."""
-    result = []
-    for ch in text:
-        code = ord(ch)
-        if ch == ' ':
-            result.append('\u3000')
-        elif 0x21 <= code <= 0x7E:
-            result.append(chr(code + 0xFEE0))
-        else:
-            # Polskie znaki diakrytyczne itp. nie mają odpowiednika "fullwidth"
-            # i zostają w oryginalnej (węższej) formie.
-            result.append(ch)
-    return ''.join(result)
-
-
-def display_width(text):
-    """Zwraca szerokość tekstu w kolumnach terminala (znaki 'fullwidth' liczą się podwójnie)."""
-    width = 0
-    for ch in text:
-        code = ord(ch)
-        if code == 0x3000 or 0xFF00 <= code <= 0xFFEF:
-            width += 2
-        else:
-            width += 1
-    return width
-
-
 
 class MpvLrcPlayer:
     def __init__(self, stdscr, start_file):
@@ -79,11 +44,8 @@ class MpvLrcPlayer:
         self.duration = 0.0
         self.needs_next = False
         
-        # Konfiguracja silnika MPV (bez GUI i wideo).
-        # idle=True utrzymuje rdzeń mpv aktywny po zakończeniu utworu, dzięki
-        # czemu automatyczne przejście do kolejnej ścieżki działa niezawodnie
-        # niezależnie od tego, czy program uruchomiono z plikiem, czy z katalogiem.
-        self.player = mpv.MPV(ytdl=False, video=False, idle=True)
+        # Konfiguracja silnika MPV (bez GUI i wideo)
+        self.player = mpv.MPV(ytdl=False, video=False)
         
         # Obserwatory (MPV aktualizuje wartości asynchronicznie)
         @self.player.property_observer('time-pos')
@@ -272,12 +234,8 @@ class MpvLrcPlayer:
 
             if not self.lyrics:
                 msg = "BRAK TEKSTU"
-                row_y = max(top_margin, min(height // 2, height - 3))
                 self.stdscr.attron(curses.color_pair(4) | curses.A_BOLD)
-                try:
-                    self.stdscr.addstr(row_y, max(0, width // 2 - len(msg) // 2), msg)
-                except curses.error:
-                    pass
+                self.stdscr.addstr(height // 2, max(0, width // 2 - len(msg) // 2), msg)
                 self.stdscr.attroff(curses.color_pair(4) | curses.A_BOLD)
             else:
                 current_index = -1
@@ -301,13 +259,9 @@ class MpvLrcPlayer:
                         text = self.lyrics[i][1]
                         
                         if i == current_index:
-                            # Bieżący wers: realnie powiększony (znaki "fullwidth"
-                            # zajmują 2 kolumny terminala) i dodatkowo obramowany
-                            # strzałkami dla jeszcze lepszej widoczności.
-                            big_text = to_fullwidth(text)
-                            highlighted_text = f"▶ {big_text} ◀"
-                            total_width = display_width(highlighted_text)
-                            col_x = max(0, width // 2 - total_width // 2)
+                            # Mocno wyróżniony aktualny wers z ramkami - symulacja większego rozmiaru
+                            highlighted_text = f"► {text} ◄"
+                            col_x = max(0, width // 2 - len(highlighted_text) // 2)
                             self.stdscr.attron(curses.color_pair(1) | curses.A_BOLD)
                             try: self.stdscr.addstr(row_y, col_x, highlighted_text)
                             except curses.error: pass
@@ -362,11 +316,6 @@ def main(stdscr, target_path):
     MpvLrcPlayer(stdscr, target_path).run()
 
 if __name__ == "__main__":
-    # Ustawienie lokalnego locale (UTF-8) jest wymagane, żeby ncurses poprawnie
-    # obliczał szerokość znaków Unicode (polskie znaki diakrytyczne oraz
-    # szerokie znaki "fullwidth" użyte do powiększenia aktualnej linii tekstu).
-    locale.setlocale(locale.LC_ALL, '')
-
     if len(sys.argv) < 2:
         target = os.getcwd()
     else:
