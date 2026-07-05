@@ -43,6 +43,7 @@ class MpvLrcPlayer:
         self.time_pos = 0.0
         self.duration = 0.0
         self.needs_next = False
+        self.auto_next = True
         
         # Konfiguracja silnika MPV (bez GUI i wideo)
         self.player = mpv.MPV(ytdl=False, video=False)
@@ -58,7 +59,7 @@ class MpvLrcPlayer:
 
         @self.player.property_observer('eof-reached')
         def eof_observer(_name, value):
-            if value:
+            if value and self.auto_next:
                 self.needs_next = True
 
         # Inicjalizacja curses
@@ -181,7 +182,7 @@ class MpvLrcPlayer:
     def run(self):
         while True:
             # Automatyczne przejście do następnego utworu
-            if self.needs_next:
+            if self.needs_next and self.auto_next:
                 self.next_track()
 
             self.stdscr.erase()
@@ -212,7 +213,8 @@ class MpvLrcPlayer:
             
             vol_str = f"Głośność: {'WYCISZONY' if mute else f'{int(vol)}%'}"
             state_str = "PAUZA" if pause else "ODTWARZANIE"
-            self.stdscr.addstr(3, 2, f"{vol_str} | {state_str}", curses.color_pair(2) | curses.A_BOLD)
+            auto_str = "AUTO-NEXT: WŁĄCZONE" if self.auto_next else "AUTO-NEXT: WYŁĄCZONE"
+            self.stdscr.addstr(3, 2, f"{vol_str} | {state_str} | {auto_str}", curses.color_pair(2) | curses.A_BOLD)
             self.stdscr.hline(4, 0, curses.ACS_HLINE, width)
 
             # --- PANEL INFORMACYJNY: Autor, Album i Miniaturka Kolorowego ASCII ---
@@ -276,7 +278,7 @@ class MpvLrcPlayer:
                     row_y += 1
 
             # --- DOLNY PANEL: Klawiszologia ---
-            help_str = " ←/→:Przewijaj | ↑/↓:Głośność | Spacja:Pauza | m:Wycisz | n/p:Nast/Poprz | Home/End | q:Wyjście "
+            help_str = " ←/→:Przewijaj | ↑/↓:Głośność | Spacja:Pauza | m:Wycisz | a:Auto-next | n/p:Nast/Poprz | Home/End | q:Wyjście "
             self.stdscr.addstr(height - 1, max(0, width//2 - len(help_str)//2), help_str, curses.color_pair(3) | curses.A_REVERSE)
 
             self.stdscr.refresh()
@@ -299,6 +301,9 @@ class MpvLrcPlayer:
                 self.player.pause = not pause
             elif c == ord('m'):
                 self.player.mute = not mute
+            elif c == ord('a'):
+                self.auto_next = not self.auto_next
+                self.needs_next = False
             elif c in [curses.KEY_HOME, 262]:
                 self.player.time_pos = 0.0
             elif c in [curses.KEY_END, 360]:

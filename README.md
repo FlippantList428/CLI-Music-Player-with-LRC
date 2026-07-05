@@ -85,6 +85,9 @@ Gdy odtwarzacz jest uruchomiony w terminalu, obsługujesz go następującymi kla
 * **`m`** – Całkowite wyciszenie / odciszenie dźwięku
 
 
+* **`a`** – Włącz/wyłącz automatyczne przechodzenie do następnego utworu po zakończeniu bieżącego
+
+
 * **`n`** – Przeskocz do następnego utworu na liście
 
 
