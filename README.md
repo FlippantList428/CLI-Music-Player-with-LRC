@@ -88,6 +88,15 @@ Gdy odtwarzacz jest uruchomiony w terminalu, obsługujesz go następującymi kla
 * **`a`** – Włącz/wyłącz automatyczne przechodzenie do następnego utworu po zakończeniu bieżącego
 
 
+* **`s`** – Włącz/wyłącz odtwarzanie losowe (shuffle)
+
+
+* **`r`** – Przełącz tryb powtarzania: WYŁ → WSZYSTKO → JEDEN → WYŁ
+
+
+* **`b`** – Włącz/wyłącz automatyczne pomijanie uszkodzonych/nieodtwarzalnych plików
+
+
 * **`n`** – Przeskocz do następnego utworu na liście
 
 
@@ -101,3 +110,13 @@ Gdy odtwarzacz jest uruchomiony w terminalu, obsługujesz go następującymi kla
 
 
 * **`q`** – Zamknięcie programu
+
+### 🔁 Szczegóły nowych trybów
+
+* **Shuffle (`s`)** – utwory są losowane bez powtórzeń, dopóki cała playlista nie zostanie odtworzona (dopiero wtedy losowanie zaczyna się od nowa). Klawisz `p` w tym trybie cofa Cię do faktycznie poprzednio odtworzonego utworu (historia), a nie do poprzedniego indeksu na liście.
+* **Powtarzanie (`r`)**:
+  * `WYŁ` – po ostatnim utworze (lub po przejściu całej losowej puli w trybie shuffle) odtwarzanie zatrzymuje się.
+  * `WSZYSTKO` – po ostatnim utworze playlista zaczyna się od nowa (domyślne zachowanie).
+  * `JEDEN` – bieżący utwór odtwarza się w kółko.
+  * Powyższe tryby działają tylko wtedy, gdy `AUTO-NEXT` jest włączone; ręczne `n`/`p` zawsze przechodzą do innego utworu.
+* **Auto-pomijanie błędów (`b`)** – gdy włączone (domyślnie), plik pusty, uszkodzony lub taki, którego mpv nie potrafi odtworzyć, jest automatycznie pomijany, a odtwarzacz przechodzi dalej. Jeśli wyłączysz tę opcję, odtwarzacz zatrzyma się na uszkodzonym pliku i pokaże komunikat o błędzie zamiast go pomijać.

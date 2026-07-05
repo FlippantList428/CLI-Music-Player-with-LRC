@@ -6,6 +6,7 @@ import re
 import time
 import curses
 import io
+import random
 
 try:
     import mpv
@@ -17,6 +18,13 @@ except ImportError:
     print("Arch Linux: sudo pacman -S mpv python-mpv python-mutagen python-pillow")
     print("Ubuntu/Mint: sudo apt install mpv python3-mpv python3-mutagen python3-pil")
     sys.exit(1)
+
+# Tryby powtarzania
+REPEAT_OFF = 0
+REPEAT_ALL = 1
+REPEAT_ONE = 2
+REPEAT_LABELS = {REPEAT_OFF: "WYŁ", REPEAT_ALL: "WSZYSTKO", REPEAT_ONE: "JEDEN"}
+
 
 class MpvLrcPlayer:
     def __init__(self, stdscr, start_file):
@@ -44,6 +52,20 @@ class MpvLrcPlayer:
         self.duration = 0.0
         self.needs_next = False
         self.auto_next = True
+
+        # Shuffle: "worek" z nieodtworzonymi indeksami + historia (dla 'p')
+        self.shuffle = False
+        self.shuffle_bag = []
+        self.history = []
+
+        # Powtarzanie: WYŁ / WSZYSTKO / JEDEN
+        self.repeat_mode = REPEAT_ALL
+
+        # Auto-pomijanie uszkodzonych/nieodtwarzalnych plików
+        self.skip_bad_files = True
+        self.bad_file = False
+        self.failed_attempts = 0
+        self.load_time = 0.0
         
         # Konfiguracja silnika MPV (bez GUI i wideo)
         self.player = mpv.MPV(ytdl=False, video=False)
@@ -56,11 +78,19 @@ class MpvLrcPlayer:
         @self.player.property_observer('duration')
         def dur_observer(_name, value):
             self.duration = value if value is not None else 0.0
+            if self.duration > 0:
+                # Plik faktycznie się odtwarza - reset licznika błędów pod rząd
+                self.failed_attempts = 0
 
         @self.player.property_observer('eof-reached')
         def eof_observer(_name, value):
-            if value and self.auto_next:
-                self.needs_next = True
+            if not value:
+                return
+            # Jeśli plik zakończył się natychmiast bez ustalenia długości,
+            # najpewniej jest uszkodzony/nieobsługiwany.
+            if self.duration <= 0.0 and (time.time() - self.load_time) < 3.0:
+                self.bad_file = True
+            self.needs_next = True
 
         # Inicjalizacja curses
         curses.curs_set(0)
@@ -111,13 +141,24 @@ class MpvLrcPlayer:
             return self.parse_lyrics_text(f.read())
 
     def load_track(self):
-        if not self.playlist: return
+        if not self.playlist:
+            return
         file_name = self.playlist[self.current_idx]
         mp3_path = os.path.join(self.dir, file_name)
         
         self.metadata = {'artist': 'Nieznany', 'album': 'Nieznany'}
         self.ascii_art = []
         uslt_lyrics = []
+        self.bad_file = False
+
+        # Szybka wstępna weryfikacja - czy plik w ogóle da się otworzyć i coś zawiera
+        try:
+            if os.path.getsize(mp3_path) == 0:
+                raise ValueError("Pusty plik")
+            with open(mp3_path, 'rb') as f:
+                f.read(4)
+        except Exception:
+            self.bad_file = True
 
         try:
             audio = ID3(mp3_path)
@@ -161,19 +202,106 @@ class MpvLrcPlayer:
         self.time_pos = 0.0
         self.duration = 0.0
         self.needs_next = False
-        
-        self.player.play(mp3_path)
+        self.load_time = time.time()
+
+        if self.bad_file:
+            # Plik wygląda na nieodtwarzalny - nie próbuj go nawet ładować do mpv,
+            # zasygnalizuj natychmiastowe przejście dalej.
+            self.needs_next = True
+            return
+
+        try:
+            self.player.play(mp3_path)
+        except Exception:
+            self.bad_file = True
+            self.needs_next = True
+
+    def refill_shuffle_bag(self):
+        """Losuje nową kolejność odtwarzania (pomijając aktualnie grany utwór)."""
+        indices = list(range(len(self.playlist)))
+        if self.current_idx in indices:
+            indices.remove(self.current_idx)
+        random.shuffle(indices)
+        self.shuffle_bag = indices
+
+    def advance_track(self, direction=1):
+        """Ręczne lub automatyczne przejście do kolejnego/poprzedniego utworu."""
+        if not self.playlist:
+            return
+        if self.shuffle:
+            if direction > 0:
+                self.history.append(self.current_idx)
+                if len(self.history) > 1000:
+                    self.history.pop(0)
+                if not self.shuffle_bag:
+                    self.refill_shuffle_bag()
+                self.current_idx = self.shuffle_bag.pop()
+            else:
+                if self.history:
+                    self.current_idx = self.history.pop()
+                else:
+                    if not self.shuffle_bag:
+                        self.refill_shuffle_bag()
+                    self.current_idx = self.shuffle_bag.pop()
+        else:
+            self.current_idx = (self.current_idx + direction) % len(self.playlist)
+        self.load_track()
 
     def next_track(self):
-        if self.playlist:
-            self.current_idx = (self.current_idx + 1) % len(self.playlist)
-            self.load_track()
+        self.advance_track(1)
 
     def prev_track(self):
-        if self.playlist:
-            self.current_idx = (self.current_idx - 1) % len(self.playlist)
+        self.advance_track(-1)
+
+    def toggle_shuffle(self):
+        self.shuffle = not self.shuffle
+        self.shuffle_bag = []
+        self.history = []
+
+    def cycle_repeat(self):
+        self.repeat_mode = (self.repeat_mode + 1) % 3
+
+    def on_track_end(self):
+        """Wywoływane, gdy bieżący utwór zakończył odtwarzanie (naturalnie lub przez błąd)."""
+        self.needs_next = False
+
+        if self.bad_file:
+            self.bad_file = False
+            if not self.skip_bad_files:
+                # Zatrzymaj na miejscu i pokaż informację o błędzie zamiast pomijać
+                self.player.pause = True
+                return
+            self.failed_attempts += 1
+            if self.failed_attempts >= max(1, len(self.playlist)):
+                # Cała playlista wygląda na uszkodzoną - przerwij, by nie kręcić się w kółko
+                self.failed_attempts = 0
+                self.player.pause = True
+                return
+            self.advance_track(1)
+            return
+
+        self.failed_attempts = 0
+
+        if not self.auto_next:
+            return
+
+        if self.repeat_mode == REPEAT_ONE:
             self.load_track()
-            
+            return
+
+        if self.repeat_mode == REPEAT_OFF:
+            if self.shuffle:
+                playlist_exhausted = (not self.shuffle_bag) and (len(self.history) >= len(self.playlist) - 1)
+                if playlist_exhausted:
+                    self.player.pause = True
+                    return
+            else:
+                if self.current_idx == len(self.playlist) - 1:
+                    self.player.pause = True
+                    return
+
+        self.advance_track(1)
+
     def format_time(self, seconds):
         if seconds < 0: seconds = 0
         m, s = divmod(int(seconds), 60)
@@ -181,9 +309,9 @@ class MpvLrcPlayer:
 
     def run(self):
         while True:
-            # Automatyczne przejście do następnego utworu
-            if self.needs_next and self.auto_next:
-                self.next_track()
+            # Obsługa zakończenia utworu (naturalna, błąd pliku, powtarzanie, shuffle...)
+            if self.needs_next:
+                self.on_track_end()
 
             self.stdscr.erase()
             height, width = self.stdscr.getmaxyx()
@@ -213,17 +341,28 @@ class MpvLrcPlayer:
             
             vol_str = f"Głośność: {'WYCISZONY' if mute else f'{int(vol)}%'}"
             state_str = "PAUZA" if pause else "ODTWARZANIE"
-            auto_str = "AUTO-NEXT: WŁĄCZONE" if self.auto_next else "AUTO-NEXT: WYŁĄCZONE"
+            auto_str = "AUTO-NEXT: WŁ" if self.auto_next else "AUTO-NEXT: WYŁ"
             self.stdscr.addstr(3, 2, f"{vol_str} | {state_str} | {auto_str}", curses.color_pair(2) | curses.A_BOLD)
-            self.stdscr.hline(4, 0, curses.ACS_HLINE, width)
+
+            # --- DRUGI PASEK STATUSU: Shuffle / Powtarzanie / Auto-pomijanie błędów ---
+            shuffle_str = f"SHUFFLE: {'WŁ' if self.shuffle else 'WYŁ'}"
+            repeat_str = f"POWTARZAJ: {REPEAT_LABELS[self.repeat_mode]}"
+            skip_str = f"POMIJANIE BŁĘDÓW: {'WŁ' if self.skip_bad_files else 'WYŁ'}"
+            status2 = f"{shuffle_str} | {repeat_str} | {skip_str}"
+            try:
+                self.stdscr.addstr(4, 2, status2[:max(0, width - 4)], curses.color_pair(3))
+            except curses.error:
+                pass
+
+            self.stdscr.hline(5, 0, curses.ACS_HLINE, width)
 
             # --- PANEL INFORMACYJNY: Autor, Album i Miniaturka Kolorowego ASCII ---
             meta_str = f"Autor: {self.metadata['artist']} | Album: {self.metadata['album']}"
-            if 5 < height - 2:
-                self.stdscr.addstr(5, 2, meta_str[:width-4], curses.color_pair(3) | curses.A_BOLD)
+            if 6 < height - 2:
+                self.stdscr.addstr(6, 2, meta_str[:width-4], curses.color_pair(3) | curses.A_BOLD)
             
             for i, line_data in enumerate(self.ascii_art):
-                row = 6 + i
+                row = 7 + i
                 if row < height - 2:
                     for j, (char, color_idx) in enumerate(line_data):
                         try:
@@ -232,9 +371,17 @@ class MpvLrcPlayer:
                             pass # Zabezpieczenie przy rysowaniu na krawędziach
 
             # --- ŚRODKOWY PANEL: Wyśrodkowane i przygaszane napisy ---
-            top_margin = 6 + len(self.ascii_art) # Wyliczenie marginesu tak, aby nie nachodziło na obraz
+            top_margin = 7 + len(self.ascii_art) # Wyliczenie marginesu tak, aby nie nachodziło na obraz
 
-            if not self.lyrics:
+            if self.bad_file:
+                msg = "BŁĄD: NIE MOŻNA ODTWORZYĆ PLIKU"
+                self.stdscr.attron(curses.color_pair(4) | curses.A_BOLD)
+                try:
+                    self.stdscr.addstr(height // 2, max(0, width // 2 - len(msg) // 2), msg)
+                except curses.error:
+                    pass
+                self.stdscr.attroff(curses.color_pair(4) | curses.A_BOLD)
+            elif not self.lyrics:
                 msg = "BRAK TEKSTU"
                 self.stdscr.attron(curses.color_pair(4) | curses.A_BOLD)
                 self.stdscr.addstr(height // 2, max(0, width // 2 - len(msg) // 2), msg)
@@ -278,8 +425,11 @@ class MpvLrcPlayer:
                     row_y += 1
 
             # --- DOLNY PANEL: Klawiszologia ---
-            help_str = " ←/→:Przewijaj | ↑/↓:Głośność | Spacja:Pauza | m:Wycisz | a:Auto-next | n/p:Nast/Poprz | Home/End | q:Wyjście "
-            self.stdscr.addstr(height - 1, max(0, width//2 - len(help_str)//2), help_str, curses.color_pair(3) | curses.A_REVERSE)
+            help_str = " ←/→:Przewijaj | ↑/↓:Głośność | Spacja:Pauza | m:Wycisz | a:Auto-next | s:Shuffle | r:Powtarzaj | b:Auto-pomijanie | n/p:Nast/Poprz | q:Wyjście "
+            try:
+                self.stdscr.addstr(height - 1, max(0, width//2 - len(help_str)//2), help_str[:max(0, width-1)], curses.color_pair(3) | curses.A_REVERSE)
+            except curses.error:
+                pass
 
             self.stdscr.refresh()
 
@@ -304,6 +454,12 @@ class MpvLrcPlayer:
             elif c == ord('a'):
                 self.auto_next = not self.auto_next
                 self.needs_next = False
+            elif c == ord('s'):
+                self.toggle_shuffle()
+            elif c == ord('r'):
+                self.cycle_repeat()
+            elif c == ord('b'):
+                self.skip_bad_files = not self.skip_bad_files
             elif c in [curses.KEY_HOME, 262]:
                 self.player.time_pos = 0.0
             elif c in [curses.KEY_END, 360]:
