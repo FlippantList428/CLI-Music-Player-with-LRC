@@ -222,6 +222,12 @@ class MpvLrcPlayer:
 
         try:
             self.player.play(mp3_path)
+            # Po naturalnym zakończeniu poprzedniego utworu mpv samo ustawia
+            # pause=True (tak sygnalizuje "koniec odtwarzania"). Bez wymuszenia
+            # pause=False ta wartość "dziedziczy się" do nowo wczytanego pliku,
+            # który wtedy zostaje wczytany, ale stoi w miejscu na 0:00 -
+            # dokładnie objaw zgłaszany przy auto-next/powtarzaniu.
+            self.player.pause = False
         except Exception:
             self.bad_file = True
             self.needs_next = True
