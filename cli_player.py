@@ -98,6 +98,34 @@ class MpvLrcPlayer:
                 self.bad_file = True
             self.needs_next = True
 
+        @self.player.event_callback('end-file')
+        def end_file_observer(event):
+            # Twardsze (i dużo bardziej niezawodne) źródło informacji o końcu
+            # utworu niż same właściwości 'eof-reached'/'duration'. Te ostatnie
+            # potrafią same "wyzerować się" (mpv ustawia je na None przy
+            # zwolnieniu pliku), przez co warunek na polling w run() nigdy nie
+            # zdąży się spełnić, a needs_next nie zostanie ustawione - efekt:
+            # utwór "zawisa" na 0:00/0:00 i nigdy nie przechodzi dalej.
+            #
+            # UWAGA: 'event' to surowa struktura ctypes (MpvEvent), a nie
+            # słownik - właściwy powód zakończenia odczytujemy z event.data.reason
+            # i porównujemy z nazwanymi stałymi MpvEventEndFile.
+            data = event.data
+            reason = getattr(data, 'reason', None) if data else None
+
+            if reason == mpv.MpvEventEndFile.EOF:
+                if self.duration <= 0.0 and (time.time() - self.load_time) < 3.0:
+                    self.bad_file = True
+                self.needs_next = True
+            elif reason == mpv.MpvEventEndFile.ERROR:
+                # Błąd odtwarzania (np. uszkodzony plik) - też trzeba przejść dalej.
+                self.bad_file = True
+                self.needs_next = True
+            # RESTARTED/ABORTED/QUIT/REDIRECT pomijamy celowo - takie zdarzenie
+            # przychodzi też wtedy, gdy sami podmieniamy plik przez play()
+            # (np. ręczne n/p), więc potraktowanie go jako "koniec utworu"
+            # wywołałoby podwójne, niechciane przejście do kolejnej ścieżki.
+
         # Inicjalizacja curses
         curses.curs_set(0)
         self.stdscr.nodelay(1)
